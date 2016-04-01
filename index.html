@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title> Havets klocka </title>
+	<style>
+	body { margin: 0; overflow: hidden;}
+	canvas { width: 100%; height: 100%; display: block;}
+	</style>
+</head>
+
+
+<body>
+	<div id="container"></div>
+
+</body>
+
+<script src="js/three.min.js"></script>
+<script src="functions.js"></script>
+<script src="functions_advanced.js"></script>
+
+<script src="js/MTLLoader.js"></script>
+<script src="js/DDSLoader.js"></script>
+<script src="js/OBJMTLLoader.js"></script>
+<script src="js/OBJLoader.js"></script>
+<script src="js/ShaderGodRays.js"></script>
+<script src="js/FresnelShader.js"></script>
+
+
+
+<!--NEW SHADERS-->
+<script type="x-shader/x-vertex" id="vertexShaderWater">
+vec3 mod289(vec3 x)
+{
+	return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+vec4 mod289(vec4 x)
+{
+	return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+vec4 permute(vec4 x)
+{
+	return mod289(((x*34.0)+1.0)*x);
+}
+
+vec4 taylorInvSqrt(vec4 r)
+{
+	return 1.79284291400159 - 0.85373472095314 * r;
+}
+
+vec3 fade(vec3 t) {
+	return t*t*t*(t*(t*6.0-15.0)+10.0);
+}
+
+
+// Classic Perlin noise, periodic variant
+float pnoise(vec3 P, vec3 rep)
+{
+	vec3 Pi0 = mod(floor(P), rep); // Integer part, modulo period
+	vec3 Pi1 = mod(Pi0 + vec3(1.0), rep); // Integer part + 1, mod period
+	Pi0 = mod289(Pi0);
+	Pi1 = mod289(Pi1);
+	vec3 Pf0 = fract(P); // Fractional part for interpolation
+	vec3 Pf1 = Pf0 - vec3(1.0); // Fractional part - 1.0
+	vec4 ix = vec4(Pi0.x, Pi1.x, Pi0.x, Pi1.x);
+	vec4 iy = vec4(Pi0.yy, Pi1.yy);
+	vec4 iz0 = Pi0.zzzz;
+	vec4 iz1 = Pi1.zzzz;
+
+	vec4 ixy = permute(permute(ix) + iy);
+	vec4 ixy0 = permute(ixy + iz0);
+	vec4 ixy1 = permute(ixy + iz1);
+
+	vec4 gx0 = ixy0 * (1.0 / 7.0);
+	vec4 gy0 = fract(floor(gx0) * (1.0 / 7.0)) - 0.5;
+	gx0 = fract(gx0);
+	vec4 gz0 = vec4(0.5) - abs(gx0) - abs(gy0);
+	vec4 sz0 = step(gz0, vec4(0.0));
+	gx0 -= sz0 * (step(0.0, gx0) - 0.5);
+	gy0 -= sz0 * (step(0.0, gy0) - 0.5);
+
+	vec4 gx1 = ixy1 * (1.0 / 7.0);
+	vec4 gy1 = fract(floor(gx1) * (1.0 / 7.0)) - 0.5;
+	gx1 = fract(gx1);
+	vec4 gz1 = vec4(0.5) - abs(gx1) - abs(gy1);
+	vec4 sz1 = step(gz1, vec4(0.0));
+	gx1 -= sz1 * (step(0.0, gx1) - 0.5);
+	gy1 -= sz1 * (step(0.0, gy1) - 0.5);
+
+	vec3 g000 = vec3(gx0.x,gy0.x,gz0.x);
+	vec3 g100 = vec3(gx0.y,gy0.y,gz0.y);
+	vec3 g010 = vec3(gx0.z,gy0.z,gz0.z);
+	vec3 g110 = vec3(gx0.w,gy0.w,gz0.w);
+	vec3 g001 = vec3(gx1.x,gy1.x,gz1.x);
+	vec3 g101 = vec3(gx1.y,gy1.y,gz1.y);
+	vec3 g011 = vec3(gx1.z,gy1.z,gz1.z);
+	vec3 g111 = vec3(gx1.w,gy1.w,gz1.w);
+
+	vec4 norm0 = taylorInvSqrt(vec4(dot(g000, g000), dot(g010, g010), dot(g100, g100), dot(g110, g110)));
+	g000 *= norm0.x;
+	g010 *= norm0.y;
+	g100 *= norm0.z;
+	g110 *= norm0.w;
+	vec4 norm1 = taylorInvSqrt(vec4(dot(g001, g001), dot(g011, g011), dot(g101, g101), dot(g111, g111)));
+	g001 *= norm1.x;
+	g011 *= norm1.y;
+	g101 *= norm1.z;
+	g111 *= norm1.w;
+
+	float n000 = dot(g000, Pf0);
+	float n100 = dot(g100, vec3(Pf1.x, Pf0.yz));
+	float n010 = dot(g010, vec3(Pf0.x, Pf1.y, Pf0.z));
+	float n110 = dot(g110, vec3(Pf1.xy, Pf0.z));
+	float n001 = dot(g001, vec3(Pf0.xy, Pf1.z));
+	float n101 = dot(g101, vec3(Pf1.x, Pf0.y, Pf1.z));
+	float n011 = dot(g011, vec3(Pf0.x, Pf1.yz));
+	float n111 = dot(g111, Pf1);
+
+	vec3 fade_xyz = fade(Pf0);
+	vec4 n_z = mix(vec4(n000, n100, n010, n110), vec4(n001, n101, n011, n111), fade_xyz.z);
+	vec2 n_yz = mix(n_z.xy, n_z.zw, fade_xyz.y);
+	float n_xyz = mix(n_yz.x, n_yz.y, fade_xyz.x);
+	return 2.2 * n_xyz;
+}
+
+// Include the Ashima code here!
+
+//varying vec2 vUv;
+varying vec3 positionFrag;
+varying vec3 normalFrag;
+varying float noise;
+varying vec3 newPos;
+uniform float time;
+
+float turbulence( vec3 p ) {
+
+	float t = -.5;
+
+	for (float f = 1.0 ; f <= 10.0 ; f++ ){
+		float power = pow( 2.0, f );
+		t += abs( pnoise( vec3( power * p ), vec3( 10.0, 10.0, 10.0 ) ) / power );
+	}
+	return t;
+}
+
+float getDisplacement(vec3 position, float time){
+
+	noise = 1.0 *  -.1 * turbulence( .2 * normal + time*0.6 );
+
+	float b = 3.0 * pnoise( 0.05 * position + vec3( 2.0 * time*0.6 ), vec3( 100.0 ) );
+	float c = 1.0 * pnoise( 0.2 * position + vec3( 2.0 * time*0.3 ), vec3( 100.0 ) );
+	return - noise + b + c ;
+
+}
+
+void main() {
+
+
+	float displacement = getDisplacement(position, time);
+	vec3 newPosition = position + normal * displacement*0.5;
+	newPos = newPosition;
+	normalFrag = normal;
+	positionFrag = position;
+
+
+	gl_Position = projectionMatrix * modelViewMatrix * vec4( newPosition, 1.0 );
+
+}
+</script>
+
+<script type="x-shader/x-vertex" id="fragmentShaderWater">
+
+varying vec3 positionFrag; //inbuilt position
+varying vec3 normalFrag; //inbuilt normal
+varying vec3 newPos;
+uniform float time;
+uniform bool fog;
+uniform vec3 cameraPos;
+uniform vec3 lightPos;
+
+vec3 mod289(vec3 x)
+{
+	return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+vec4 mod289(vec4 x)
+{
+	return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+vec4 permute(vec4 x)
+{
+	return mod289(((x*34.0)+1.0)*x);
+}
+
+vec4 taylorInvSqrt(vec4 r)
+{
+	return 1.79284291400159 - 0.85373472095314 * r;
+}
+
+vec3 fade(vec3 t) {
+	return t*t*t*(t*(t*6.0-15.0)+10.0);
+}
+
+
+// Classic Perlin noise, periodic variant
+float pnoise(vec3 P, vec3 rep)
+{
+	vec3 Pi0 = mod(floor(P), rep); // Integer part, modulo period
+	vec3 Pi1 = mod(Pi0 + vec3(1.0), rep); // Integer part + 1, mod period
+	Pi0 = mod289(Pi0);
+	Pi1 = mod289(Pi1);
+	vec3 Pf0 = fract(P); // Fractional part for interpolation
+	vec3 Pf1 = Pf0 - vec3(1.0); // Fractional part - 1.0
+	vec4 ix = vec4(Pi0.x, Pi1.x, Pi0.x, Pi1.x);
+	vec4 iy = vec4(Pi0.yy, Pi1.yy);
+	vec4 iz0 = Pi0.zzzz;
+	vec4 iz1 = Pi1.zzzz;
+
+	vec4 ixy = permute(permute(ix) + iy);
+	vec4 ixy0 = permute(ixy + iz0);
+	vec4 ixy1 = permute(ixy + iz1);
+
+	vec4 gx0 = ixy0 * (1.0 / 7.0);
+	vec4 gy0 = fract(floor(gx0) * (1.0 / 7.0)) - 0.5;
+	gx0 = fract(gx0);
+	vec4 gz0 = vec4(0.5) - abs(gx0) - abs(gy0);
+	vec4 sz0 = step(gz0, vec4(0.0));
+	gx0 -= sz0 * (step(0.0, gx0) - 0.5);
+	gy0 -= sz0 * (step(0.0, gy0) - 0.5);
+
+	vec4 gx1 = ixy1 * (1.0 / 7.0);
+	vec4 gy1 = fract(floor(gx1) * (1.0 / 7.0)) - 0.5;
+	gx1 = fract(gx1);
+	vec4 gz1 = vec4(0.5) - abs(gx1) - abs(gy1);
+	vec4 sz1 = step(gz1, vec4(0.0));
+	gx1 -= sz1 * (step(0.0, gx1) - 0.5);
+	gy1 -= sz1 * (step(0.0, gy1) - 0.5);
+
+	vec3 g000 = vec3(gx0.x,gy0.x,gz0.x);
+	vec3 g100 = vec3(gx0.y,gy0.y,gz0.y);
+	vec3 g010 = vec3(gx0.z,gy0.z,gz0.z);
+	vec3 g110 = vec3(gx0.w,gy0.w,gz0.w);
+	vec3 g001 = vec3(gx1.x,gy1.x,gz1.x);
+	vec3 g101 = vec3(gx1.y,gy1.y,gz1.y);
+	vec3 g011 = vec3(gx1.z,gy1.z,gz1.z);
+	vec3 g111 = vec3(gx1.w,gy1.w,gz1.w);
+
+	vec4 norm0 = taylorInvSqrt(vec4(dot(g000, g000), dot(g010, g010), dot(g100, g100), dot(g110, g110)));
+	g000 *= norm0.x;
+	g010 *= norm0.y;
+	g100 *= norm0.z;
+	g110 *= norm0.w;
+	vec4 norm1 = taylorInvSqrt(vec4(dot(g001, g001), dot(g011, g011), dot(g101, g101), dot(g111, g111)));
+	g001 *= norm1.x;
+	g011 *= norm1.y;
+	g101 *= norm1.z;
+	g111 *= norm1.w;
+
+	float n000 = dot(g000, Pf0);
+	float n100 = dot(g100, vec3(Pf1.x, Pf0.yz));
+	float n010 = dot(g010, vec3(Pf0.x, Pf1.y, Pf0.z));
+	float n110 = dot(g110, vec3(Pf1.xy, Pf0.z));
+	float n001 = dot(g001, vec3(Pf0.xy, Pf1.z));
+	float n101 = dot(g101, vec3(Pf1.x, Pf0.y, Pf1.z));
+	float n011 = dot(g011, vec3(Pf0.x, Pf1.yz));
+	float n111 = dot(g111, Pf1);
+
+	vec3 fade_xyz = fade(Pf0);
+	vec4 n_z = mix(vec4(n000, n100, n010, n110), vec4(n001, n101, n011, n111), fade_xyz.z);
+	vec2 n_yz = mix(n_z.xy, n_z.zw, fade_xyz.y);
+	float n_xyz = mix(n_yz.x, n_yz.y, fade_xyz.x);
+	return 2.2 * n_xyz;
+}
+
+float turbulence( vec3 p ) {
+
+	float t = -.5;
+
+	for (float f = 1.0 ; f <= 10.0 ; f++ ){
+		float power = pow( 2.0, f );
+		t += abs( pnoise( vec3( power * p ), vec3( 10.0, 10.0, 10.0 ) ) / power );
+	}
+	return t;
+}
+
+float getBumpmap(vec3 position, float time){
+	float noise = 1.0 *  -.1 * turbulence( .2 * normalFrag + time*0.6 );
+
+
+	float b = 6.0 * pnoise( 0.05 * position + vec3( 2.0 * time*0.6 ), vec3( 100.0 ) );
+	float c = 2.0 * pnoise( 0.2 * position + vec3( 2.0 * time*0.3 ), vec3( 100.0 ) );
+
+	float d = 0.8 * pnoise( 0.9 * position + vec3( 2.0 * time*2.3 ), vec3( 100.0 ) );
+	float e = 0.9 * pnoise( 1.9 * position + vec3( 2.0 * time*1.3 ), vec3( 100.0 ) );
+	return - noise + b + c + b*d + max(b*e,0.0);
+}
+
+
+vec3 calculateNormal(vec3 position, float time){
+
+	float dx = 0.5;
+
+	vec3 A = vec3( 0.0, getBumpmap(vec3(position.x, position.y, position.z), time), 0.0);
+	vec3 B = vec3( dx, getBumpmap(vec3(position.x + dx , position.y, position.z), time), 0.0);
+	vec3 x = B - A;
+
+
+	vec3 C = vec3( 0.0, getBumpmap(vec3(position.x, position.y, position.z + dx), time), dx);
+	vec3 z = B - C;
+
+	vec3 n = cross(x, z);
+
+
+	return n;
+}
+
+
+
+void main() {
+
+	float tester = 5.0;
+	float kd = 0.1;
+	float ks = 1.1;
+	float alpha = 3.0;
+
+	vec3 vecNormal = calculateNormal( positionFrag, time);
+
+	vec3 r = (cameraPos - newPos);
+
+	vec3 V = normalize(cameraPos - newPos);
+	vec3 L = normalize(lightPos - newPos);
+	vec3 R = 2.0 * dot(L, vecNormal) * vecNormal - L;
+
+
+	vec3 ambient = 0.12 * vec3(0.3*(newPos.z+tester),0.6*(newPos.z+tester),0.7*(newPos.z+tester));
+
+	vec3 diffuse = 0.0005*vec3(kd*max(dot(lightPos,vecNormal), 0.0));
+
+	vec3 specular = vec3( 0.007 * max( 0.00000001 , (ks * pow( dot(R,V), alpha))) );
+
+	if(fog){
+		float distance = sqrt(pow(newPos.x, 2.0) + pow(newPos.y, 2.0) + pow(newPos.z, 2.0));
+		//gl_FragColor = vec4((ambient + diffuse+ distance/330.0) , 1.0 );
+		gl_FragColor = vec4( (ambient + diffuse + specular + distance/330.0), 1.0 );
+	}else{
+		gl_FragColor = vec4(ambient + diffuse + specular, 1.0 );
+	}
+
+
+
+}
+
+</script>
+
+<script type="x-shader/x-vertex" id="vertexShaderCloud">
+		vec3 mod289(vec3 x)
+		{
+		  return x - floor(x * (1.0 / 289.0)) * 289.0;
+		}
+
+		vec4 mod289(vec4 x)
+		{
+		  return x - floor(x * (1.0 / 289.0)) * 289.0;
+		}
+
+		vec4 permute(vec4 x)
+		{
+		  return mod289(((x*34.0)+1.0)*x);
+		}
+
+		vec4 taylorInvSqrt(vec4 r)
+		{
+		  return 1.79284291400159 - 0.85373472095314 * r;
+		}
+
+		vec3 fade(vec3 t) {
+		  return t*t*t*(t*(t*6.0-15.0)+10.0);
+		}
+
+
+		// Classic Perlin noise, periodic variant
+		float pnoise(vec3 P, vec3 rep)
+		{
+		  vec3 Pi0 = mod(floor(P), rep); // Integer part, modulo period
+		  vec3 Pi1 = mod(Pi0 + vec3(1.0), rep); // Integer part + 1, mod period
+		  Pi0 = mod289(Pi0);
+		  Pi1 = mod289(Pi1);
+		  vec3 Pf0 = fract(P); // Fractional part for interpolation
+		  vec3 Pf1 = Pf0 - vec3(1.0); // Fractional part - 1.0
+		  vec4 ix = vec4(Pi0.x, Pi1.x, Pi0.x, Pi1.x);
+		  vec4 iy = vec4(Pi0.yy, Pi1.yy);
+		  vec4 iz0 = Pi0.zzzz;
+		  vec4 iz1 = Pi1.zzzz;
+
+		  vec4 ixy = permute(permute(ix) + iy);
+		  vec4 ixy0 = permute(ixy + iz0);
+		  vec4 ixy1 = permute(ixy + iz1);
+
+		  vec4 gx0 = ixy0 * (1.0 / 7.0);
+		  vec4 gy0 = fract(floor(gx0) * (1.0 / 7.0)) - 0.5;
+		  gx0 = fract(gx0);
+		  vec4 gz0 = vec4(0.5) - abs(gx0) - abs(gy0);
+		  vec4 sz0 = step(gz0, vec4(0.0));
+		  gx0 -= sz0 * (step(0.0, gx0) - 0.5);
+		  gy0 -= sz0 * (step(0.0, gy0) - 0.5);
+
+		  vec4 gx1 = ixy1 * (1.0 / 7.0);
+		  vec4 gy1 = fract(floor(gx1) * (1.0 / 7.0)) - 0.5;
+		  gx1 = fract(gx1);
+		  vec4 gz1 = vec4(0.5) - abs(gx1) - abs(gy1);
+		  vec4 sz1 = step(gz1, vec4(0.0));
+		  gx1 -= sz1 * (step(0.0, gx1) - 0.5);
+		  gy1 -= sz1 * (step(0.0, gy1) - 0.5);
+
+		  vec3 g000 = vec3(gx0.x,gy0.x,gz0.x);
+		  vec3 g100 = vec3(gx0.y,gy0.y,gz0.y);
+		  vec3 g010 = vec3(gx0.z,gy0.z,gz0.z);
+		  vec3 g110 = vec3(gx0.w,gy0.w,gz0.w);
+		  vec3 g001 = vec3(gx1.x,gy1.x,gz1.x);
+		  vec3 g101 = vec3(gx1.y,gy1.y,gz1.y);
+		  vec3 g011 = vec3(gx1.z,gy1.z,gz1.z);
+		  vec3 g111 = vec3(gx1.w,gy1.w,gz1.w);
+
+		  vec4 norm0 = taylorInvSqrt(vec4(dot(g000, g000), dot(g010, g010), dot(g100, g100), dot(g110, g110)));
+		  g000 *= norm0.x;
+		  g010 *= norm0.y;
+		  g100 *= norm0.z;
+		  g110 *= norm0.w;
+		  vec4 norm1 = taylorInvSqrt(vec4(dot(g001, g001), dot(g011, g011), dot(g101, g101), dot(g111, g111)));
+		  g001 *= norm1.x;
+		  g011 *= norm1.y;
+		  g101 *= norm1.z;
+		  g111 *= norm1.w;
+
+		  float n000 = dot(g000, Pf0);
+		  float n100 = dot(g100, vec3(Pf1.x, Pf0.yz));
+		  float n010 = dot(g010, vec3(Pf0.x, Pf1.y, Pf0.z));
+		  float n110 = dot(g110, vec3(Pf1.xy, Pf0.z));
+		  float n001 = dot(g001, vec3(Pf0.xy, Pf1.z));
+		  float n101 = dot(g101, vec3(Pf1.x, Pf0.y, Pf1.z));
+		  float n011 = dot(g011, vec3(Pf0.x, Pf1.yz));
+		  float n111 = dot(g111, Pf1);
+
+		  vec3 fade_xyz = fade(Pf0);
+		  vec4 n_z = mix(vec4(n000, n100, n010, n110), vec4(n001, n101, n011, n111), fade_xyz.z);
+		  vec2 n_yz = mix(n_z.xy, n_z.zw, fade_xyz.y);
+		  float n_xyz = mix(n_yz.x, n_yz.y, fade_xyz.x);
+		  return 2.2 * n_xyz;
+		}
+
+		// Include the Ashima code here!
+
+		varying vec2 vUv;
+		varying float noise;
+		varying vec3 newPos;
+		varying vec3 vecNormal;
+		uniform float time;
+
+		float turbulence( vec3 p ) {
+
+		    float t = -.5;
+
+		    for (float f = 1.0 ; f <= 10.0 ; f++ ){
+		        float power = pow( 2.0, f );
+		        t += abs( pnoise( vec3( power * p ), vec3( 10.0, 10.0, 10.0 ) ) / power );
+		    }
+		    return t;
+		}
+
+
+
+		void main() {
+
+		    vUv = uv;
+
+		    // add time to the noise parameters so it's animated
+		    noise = 1.0 *  -.1 * turbulence( .2 * normal + time*0.6 );
+
+		    float b = 5.0 * pnoise( 0.05 * position + vec3( 2.0 * time*0.3 ), vec3( 100.0 ) );
+		    float c = 1.0 * pnoise( 0.2 * position + vec3( 2.0 * time*0.2 ), vec3( 100.0 ) );
+		    float d = 0.5 * pnoise( 0.3 * position + vec3( 2.0 * time*0.2 ), vec3( 100.0 ) );
+		    float displacement = - noise + b + c + d;
+
+		    vec3 newPosition = position + normal * displacement*0.5;
+		    newPos = newPosition;
+		    vecNormal = normal;
+		    gl_Position = projectionMatrix * modelViewMatrix * vec4( newPosition, 1.0 );
+
+		}
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShaderCloud">
+
+		varying vec3 newPos;
+		varying vec3 vecNormal;
+		uniform vec3 cameraPos;
+		uniform vec3 lightPos;
+		uniform bool fog;
+
+		void main() {
+
+		    float tester = 5.0;
+		    float kd = 0.05;
+		    float ks = 0.1;
+
+		   // bool fog = true;
+
+		    vec3 r = cameraPos - newPos;
+
+
+
+		    vec3 V = normalize(cameraPos - newPos);
+		    vec3 L = normalize(lightPos - newPos);
+
+		    vec3 ambient = 0.12 * vec3(0.7*(newPos.z+tester),0.8*(newPos.z+tester),0.9*(newPos.z+tester));
+
+		   	vec3 diffuse = vec3(kd*max(dot(lightPos,vecNormal), 0.0));
+
+
+	   		float distance = sqrt(pow(newPos.x, 2.0) + pow(newPos.y, 2.0) + pow(newPos.z, 2.0));
+	   		gl_FragColor = vec4((ambient + diffuse+  distance/330.0) , 1.0 );
+
+		}
+
+    </script>
+
+
+<script type="text/javascript" id="mainCode">
+container = document.getElementById( "container" );
+var time = new Date();
+var loader, loader2;
+var mouseX, mouseY;
+var start = Date.now();
+var container;
+
+var cameraPos = new THREE.Vector3(0);
+
+
+var secondsRot, minutesRot, hoursRot;
+
+var presentTime = true;
+var windingTimeFactor = 1;
+
+var seconds_now, minutes_now;
+
+var postprocessing = { enabled : true };
+
+var backgroundColor = 0xFFFFFF;
+
+var bgColor = 0xFF0000;
+var sunColor = 0xFF0000;
+
+var sunPosition = new THREE.Vector3( 0, 0, 80 );
+materialDepth = new THREE.MeshDepthMaterial();
+var screenSpacePosition = new THREE.Vector3();
+
+//Objects
+var dial1, dial2;
+var pencilSize = 2;
+
+var scene = new THREE.Scene();
+var sceneCube = new THREE.Scene();
+//scene.fog = new THREE.FogExp2( 0xffffff, 0.009 );
+
+var camera = new THREE.PerspectiveCamera( 60, window.innerWidth/window.innerHeight, 0.1, 200000 );
+scene.add(camera);
+
+scene.fog = new THREE.Fog( backgroundColor, 30, 5005 );
+var renderer = new THREE.WebGLRenderer();
+renderer.setSize( window.innerWidth, window.innerHeight );
+renderer.setClearColor ( 0xFFFFFF, 1 );
+container.appendChild( renderer.domElement );
+
+
+//Skapar en grupp som ska innehålla hela scengrafen
+sceneGraph = new THREE.Object3D;
+
+cloud = new THREE.Object3D;
+scene.add(cloud);
+
+
+sketch = new THREE.Object3D;
+sceneGraph.add(sketch);
+
+
+clock = new THREE.Object3D;
+secondHand = new THREE.Object3D;
+secondHandGroup = new THREE.Object3D;
+minuteHand = new THREE.Object3D;
+hourHand = new THREE.Object3D;
+secondHandGroup.add(secondHand);
+clock.add(secondHandGroup);
+clock.add(minuteHand);
+clock.add(hourHand);
+
+clock.position.z = 0.0;
+clock.position.x = -3;
+clock.position.y = -1;
+clock.rotation.x = 0;
+clock.rotation.y = -0.1;
+clock.rotation.z = 0.002;
+
+sceneGraph.add(clock);
+
+
+
+
+
+
+addLights();
+loadClock();
+loadDust();
+
+// load water
+
+//create a wireframe material
+var material_water = new THREE.ShaderMaterial( {
+
+	uniforms: {
+
+		time: { // float initialized to 0
+			type: "f",
+			value: 0.0
+		},
+		fog: { // float initialized to 0
+			type: "i",
+			value: 1
+		},
+		cameraPos: { // float initialized to 0
+			type: "v3",
+			value: new THREE.Vector3(1,1,1)
+		},
+		lightPos: { // float initialized to 0
+			type: "v3",
+			value: new THREE.Vector3(1,100,1000)
+		}
+
+
+	},
+	vertexShader: document.getElementById( 'vertexShaderWater' ).textContent,
+	fragmentShader: document.getElementById( 'fragmentShaderWater' ).textContent,
+	// fog: true,
+	// transparent: true
+
+} );
+
+
+
+
+var mesh_water = new THREE.Mesh( new THREE.PlaneGeometry(500,500,100,100), material_water );
+mesh_water.translateY(-10);
+mesh_water.rotation.x = -Math.PI/2;
+scene.add( mesh_water );
+
+
+material_cloud = new THREE.ShaderMaterial( {
+
+  uniforms: {
+      time: { // float initialized to 0
+          type: "f",
+          value: 0.0
+      },
+      fog: { // float initialized to 0
+          type: "i",
+          value: 1
+      },
+      cameraPos: { // float initialized to 0
+          type: "v3",
+          value: new THREE.Vector3(1,1,0)
+      },
+      lightPos: { // float initialized to 0
+          type: "v3",
+          value: new THREE.Vector3(0,0,1)
+      }
+
+
+  },
+  vertexShader: document.getElementById( 'vertexShaderCloud' ).textContent,
+ fragmentShader: document.getElementById( 'fragmentShaderCloud' ).textContent,
+
+} );
+
+
+
+mesh_cloud = new THREE.Mesh( new THREE.PlaneGeometry(300,300,200,200), material_cloud );
+mesh_cloud.translateY(20);
+mesh_cloud.rotation.x = Math.PI/2;
+scene.add( mesh_cloud );
+
+
+scene.add(sceneGraph);
+
+
+
+
+secondHandGroup.position.x = -1.97;
+secondHandGroup.position.z = -2.4;
+
+
+clock.rotation.x += Math.PI/2;
+clock.rotation.y += Math.PI;
+
+clock.position.x = 0;
+clock.position.y = 0.1;
+clock.position.z = 1.10;
+
+clock.scale.x = 0.06;
+clock.scale.y = 0.06;
+clock.scale.z = 0.06;
+
+sceneGraph.scale.x = 20;
+sceneGraph.scale.y = 20;
+sceneGraph.scale.z = 20;
+
+
+initPostprocessing();
+
+
+
+document.addEventListener( 'mousemove', onDocumentMouseMove, false );
+window.addEventListener( 'resize', onWindowResize, false );
+
+function onDocumentMouseMove( event ) {
+
+	mouseX = (event.clientX - window.innerWidth/2)/window.innerWidth;
+	mouseY = (event.clientY - window.innerHeight/2)/window.innerHeight;
+
+
+}
+
+function onWindowResize( e ) {
+	renderer.setSize( window.innerWidth, window.innerHeight );
+	camera.aspect = window.innerWidth / window.innerHeight;
+	camera.updateProjectionMatrix();
+}
+
+
+var init_time = new Date().getTime() / 1000;
+var zoom_time = 3;
+
+var render = function () {
+	scene.updateMatrixWorld();
+	cameraPos.setFromMatrixPosition( camera.matrixWorld );
+
+	material_water.uniforms[ 'time' ].value = .00025 * ( Date.now() - start );
+  material_water.uniforms[ 'cameraPos' ].value = cameraPos;
+  material_cloud.uniforms[ 'time' ].value = .00025 * ( Date.now() - start );
+  material_cloud.uniforms[ 'cameraPos' ].value = cameraPos;
+
+
+	time2 = new Date().getTime() / 1000 - init_time;
+
+	// if(time2 < zoom_time){
+	// 	camera.position.z = 5100 - 3900*Math.sin(time2*(Math.PI*2/4)/zoom_time);
+	// }
+	time = new Date();
+
+
+	if(camera.position.z > 100){
+		camera.position.z = 100;
+	}else if(camera.position.z < 50){
+		camera.position.z = 50;
+	}
+
+
+	mouseControls();
+
+	setHands();
+
+	cloud.rotation.z = time/50000;
+
+	requestAnimationFrame( render );
+
+	godrays();
+	//renderer.render(sceneCube, camera);
+};
+
+
+function mouseControls(){
+	sceneGraph.rotation.y = mouseX;
+	//sceneGraph.rotation.x = mouseY;
+
+}
+
+
+render();
+</script>
+
+</html>
